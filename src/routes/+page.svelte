@@ -1,287 +1,431 @@
 <script lang="ts">
-  import {
-    AESencryptBytes,
-    generateAESKey,
-    publicRSAJsonWebTokenToCryptoKey,
-    RSAencryptBytes,
-  } from "$lib/browserCrypt";
-  import type { UserServerInfo } from "$lib/models/UserInfo";
-  import { loggedUser, uploadedFiles } from "$lib/stores";
-  import { page } from "$app/stores";
-  import QrCode from "$lib/components/QrCode.svelte";
+  import { onMount, onDestroy } from "svelte";
+  import FileFollower from "$lib/components/FileFollower.svelte";
+  import FileList from "$lib/components/FileList.svelte";
+  import type { FollowerInstance } from "$lib/fileFollowerManager";
+  import { createDragVisualManager } from "$lib/dragVisualManager";
+  import { showFileList as showFileListStore } from "$lib/stores";
 
-  let isUploading = false;
-
-  type SendTypes = "unencrypted" | "private" | "protected" | "transfer";
-  let selectedSendType: SendTypes = "unencrypted";
-  let encryptionPassword = "";
-  let recipientName = "";
-  let fileName = "";
-
-  // Update file name when file changes
-  $: if (currentFiles && currentFiles[0] && fileName === "") {
-    fileName = currentFiles[0].name;
-  }
-
-  let currentFiles: FileList;
-  const FILE_SIZE_LIMIT_MB = 100; // 100MB
-
-  export let uploadStatus: { uri?: string; error?: string } = {};
-
-  let _ignoreFirst = true;
-  function updateError() {
-    if (_ignoreFirst) {
-      _ignoreFirst = false;
-      return;
-    }
-
-    uploadStatus.error = "";
-    if (!currentFiles || !currentFiles[0]) {
-      uploadStatus.error = "No files";
-      return;
-    } else {
-      if (currentFiles[0].size > FILE_SIZE_LIMIT_MB * 1024 * 1024) {
-        uploadStatus.error = `File too big!`;
-        return;
-      }
-    }
-    if (fileName === "") {
-      uploadStatus.error = "You need to provide a file name";
-      return;
-    }
-  }
-
-  $: {
-    currentFiles;
-    // fileName;
-    updateError();
-  }
-
-  const reqUploadFile = async () => {
-    updateError();
-    if (uploadStatus.error) {
-      return;
-    }
-
-    if (isUploading) {
-      return;
-    }
-
-    await uploadFile(currentFiles, fileName);
+  let showTitle = $state(true);
+  let fileInputEl: HTMLInputElement | undefined;
+  let followerEntries = $state<Array<[string, FollowerInstance]>>([]);
+  let hasActiveFollowers = $state(false);
+  let showFileList = $state(false);
+  
+  // Sync local state with store
+  $effect(() => {
+    showFileListStore.set(showFileList);
+  });
+  
+  type FileUploadStatus = {
+    id: string;
+    originalName: string;
+    url: string;
+    downloadUrl: string;
+    status: 'uploading' | 'completed';
+    bytesUploaded: number;
+    totalBytes: number;
   };
+  
+  let uploadedFiles = $state<FileUploadStatus[]>([]);
+  
+  let blackHoleRadius = $state(0);
+  
+  function calculateBlackHoleSize() {
+    if (typeof window === 'undefined') return;
+    
+    const fov = 75; // degrees, matches PerspectiveCamera fov
+    const distance = 1.5; // camera.position.z
+    const vFovRad = (fov * Math.PI) / 180;
+    const visibleHeight = 2 * Math.tan(vFovRad / 2) * distance;
+    
+    const normalizedRadius = 0.475;
+    blackHoleRadius = (window.innerHeight / visibleHeight) * normalizedRadius;
+  }
+  
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    calculateBlackHoleSize();
+    
+    const handleResize = () => {
+      calculateBlackHoleSize();
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  });
 
-  const uploadFile = async (fileList: FileList, fileName: string) => {
-    isUploading = true;
-    const file = fileList[0];
-    console.log(file);
-    let fileBuffer = await file.arrayBuffer();
-    let encryptedRecipientName = "";
-    switch (selectedSendType) {
-      case "unencrypted":
-        break;
-      case "private": {
-        if ($loggedUser === null) {
-          uploadStatus.error = "You need to log in to upload private files";
-          return;
-        }
-        // Encrypt file with user's AES key
+  const dragVisual = createDragVisualManager();
 
-        const aesKey = $loggedUser.aesKey;
-        fileBuffer = await AESencryptBytes(
-          $loggedUser.password,
-          fileBuffer,
-          aesKey
-        );
-        console.log(fileBuffer);
-        break;
+  const unsubscribeActiveFollowers = dragVisual.activeFollowers.subscribe((map) => {
+    followerEntries = Array.from(map.entries());
+  });
+
+  $effect(() => {
+    hasActiveFollowers = followerEntries.length > 0;
+  });
+
+  $effect(() => {
+    followerEntries.forEach(([id, instance]) => {
+      if (instance.component && instance.component.api) {
+        dragVisual.registerComponent(id, instance.component);
       }
-      case "protected": {
-        if (encryptionPassword === "") {
-          uploadStatus.error = "You need to provide a password";
-          return;
-        }
-
-        // Encrypt file with password
-        const aesKey = await generateAESKey(
-          encryptionPassword,
-          encryptionPassword
-        );
-        fileBuffer = await AESencryptBytes(
-          encryptionPassword,
-          fileBuffer,
-          aesKey
-        );
-        break;
-      }
-      case "transfer": {
-        if (recipientName === "") {
-          uploadStatus.error = "You need to provide a recipient";
-          return;
-        }
-
-        // Fetch recipient's public key
-        const recipient = await fetch(`/users/${recipientName}`);
-
-        if (recipient.status !== 200) {
-          uploadStatus.error = "Recipient not found";
-          return;
-        }
-
-        const recipientInfo: UserServerInfo = await recipient.json();
-        const encryptionKey = await publicRSAJsonWebTokenToCryptoKey(
-          recipientInfo.publicKey
-        );
-
-        const dataArr = new Uint8Array(fileBuffer);
-        fileBuffer = await RSAencryptBytes(dataArr, encryptionKey);
-
-        const recipientNameBytes = await RSAencryptBytes(
-          new TextEncoder().encode(recipientName),
-          encryptionKey
-        );
-        encryptedRecipientName = new TextDecoder().decode(recipientNameBytes);
-        break;
-      }
-    }
-
-    console.log("uploading file");
-
-    fileBuffer = new Uint8Array(fileBuffer);
-
-    const results = await fetch(`api/f/${fileName}`, {
-      method: "POST",
-      body: fileBuffer,
     });
+  });
 
-    if (results.status !== 200) {
-      if (results.status === 413) {
-        uploadStatus.error = "File too big";
-        isUploading = false;
-        return;
-      }
+  const processFiles = (files: FileList, skipAnimation = false) => {
+    if (typeof window === 'undefined') return;
 
-      try {
-        uploadStatus.error = await results.text();
-      } catch (error) {
-        uploadStatus.error = "Something went wrong";
-      }
-      isUploading = false;
-      return;
-    }
-
-    const res = await results.text();
-    console.log("file uploaded");
-    isUploading = false;
-    $uploadedFiles = [...$uploadedFiles, { filename: fileName, uri: res }];
-    localStorage.setItem("uploads", JSON.stringify($uploadedFiles));
-    const lastFragment = res.split("/").pop();
-    if (!lastFragment) {
-      uploadStatus.error = "No file id, something went wrong";
-      return;
-    }
-    uploadStatus.uri = $page.url + "f/" + fileName;
+    showTitle = false;
+    // Handle the dropped files here
+    console.log('Files dropped:', files);
   };
 
-  async function dropHandler(event: DragEvent) {
-    if (!event.dataTransfer) {
+  const handleFileProcessing = async (files: FileList) => {
+    // Process files immediately when dropped or selected
+    console.log('Processing files:', files);
+    
+    const fileArray = Array.from(files);
+    
+    // Add files to upload list with uploading status
+    const newUploads: FileUploadStatus[] = fileArray.map((file) => ({
+      id: 'temp-' + Date.now() + '-' + Math.random(),
+      originalName: file.name,
+      url: '',
+      downloadUrl: '',
+      status: 'uploading' as const,
+      bytesUploaded: 0,
+      totalBytes: file.size
+    }));
+    uploadedFiles = [...uploadedFiles, ...newUploads];
+
+    // Upload each file individually to track progress per file
+    for (let i = 0; i < fileArray.length; i++) {
+      const file = fileArray[i];
+      const uploadEntry = newUploads[i];
+      
+      await uploadFileWithProgress(file, uploadEntry);
+    }
+  };
+
+  const uploadFileWithProgress = (file: File, uploadEntry: FileUploadStatus): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const xhr = new XMLHttpRequest();
+
+      // Track upload progress
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) {
+          const bytesUploaded = event.loaded;
+          const totalBytes = event.total;
+          
+          // Update the specific file's progress - match by ID or filename
+          uploadedFiles = uploadedFiles.map((f) => {
+            if (f.id === uploadEntry.id || (f.originalName === file.name && f.status === 'uploading')) {
+              return {
+                ...f,
+                bytesUploaded: bytesUploaded,
+                totalBytes: totalBytes
+              };
+            }
+            return f;
+          });
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const result = JSON.parse(xhr.responseText);
+            // Server now always returns files array
+            const completedFile = result.files?.[0];
+            
+            if (!completedFile) {
+              throw new Error('Server response missing file data');
+            }
+            
+            // Update upload status to completed
+            // Match by ID first, then fallback to filename to ensure we find the right file
+            uploadedFiles = uploadedFiles.map((f) => {
+              const matchesById = f.id === uploadEntry.id;
+              const matchesByName = f.originalName === file.name && f.status === 'uploading';
+              
+              if (matchesById || matchesByName) {
+                return {
+                  id: completedFile.id,
+                  originalName: completedFile.originalName || file.name,
+                  url: completedFile.url,
+                  downloadUrl: completedFile.downloadUrl,
+                  status: 'completed' as const,
+                  bytesUploaded: f.totalBytes,
+                  totalBytes: f.totalBytes,
+                  uploadComplete: true
+                };
+              }
+              return f;
+            });
+            resolve();
+          } catch (error) {
+            console.error('Failed to parse response:', error);
+            // Remove failed upload - match by ID or filename
+            uploadedFiles = uploadedFiles.filter(f => 
+              f.id !== uploadEntry.id && !(f.originalName === file.name && f.status === 'uploading')
+            );
+            reject(error);
+          }
+        } else {
+          // Remove failed upload - match by ID or filename
+          uploadedFiles = uploadedFiles.filter(f => 
+            f.id !== uploadEntry.id && !(f.originalName === file.name && f.status === 'uploading')
+          );
+          reject(new Error(`Upload failed with status ${xhr.status}`));
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        console.error('Upload error:', xhr.statusText);
+        // Remove failed upload - match by ID or filename
+        uploadedFiles = uploadedFiles.filter(f => 
+          f.id !== uploadEntry.id && !(f.originalName === file.name && f.status === 'uploading')
+        );
+        reject(new Error('Upload failed'));
+      });
+
+      xhr.addEventListener('abort', () => {
+        // Remove aborted upload - match by ID or filename
+        uploadedFiles = uploadedFiles.filter(f => 
+          f.id !== uploadEntry.id && !(f.originalName === file.name && f.status === 'uploading')
+        );
+        reject(new Error('Upload aborted'));
+      });
+
+      xhr.open('POST', '/u');
+      xhr.send(formData);
+    });
+  };
+
+  const handleDragEnter = (event: DragEvent) => {
+    if (showFileList) return;
+    dragVisual.handleDragEnter(event);
+  };
+
+  const handleDragLeave = (event: DragEvent) => {
+    if (showFileList) return;
+    dragVisual.handleDragLeave(event);
+  };
+
+  const handleDragOver = (event: DragEvent) => {
+    if (showFileList) return;
+    dragVisual.handleDragOver(event);
+  };
+
+  const handleDrop = async (event: DragEvent) => {
+    if (showFileList) return;
+    console.log("drop event", event)
+    console.log("drop", event) // this runs before the animation finishes
+    const files = await dragVisual.handleDrop(event); // This now returns immediately
+    // files are processed immediately, animation continues in background
+    if (files && files.length > 0) {
+      processFiles(files, true);
+      handleFileProcessing(files);
+    }
+  };
+
+  const simulateSelectionAnimation = async (startX: number, startY: number, count: number) => {
+    await dragVisual.simulateSelectionAnimation(startX, startY, count);
+  };
+
+  let clickPosition = { x: 0, y: 0 };
+
+  const handleClick = (event: MouseEvent | KeyboardEvent) => {
+    if (typeof window === 'undefined' || !fileInputEl || showFileList) return;
+    
+    // Store click position for animation (use center for keyboard events)
+    if (event instanceof MouseEvent) {
+      clickPosition.x = event.clientX;
+      clickPosition.y = event.clientY;
+    } else {
+      clickPosition.x = window.innerWidth / 2;
+      clickPosition.y = window.innerHeight / 2;
+    }
+    
+    // Open file picker
+    fileInputEl.click();
+  };
+  
+  const handleBlackHoleClick = (event: MouseEvent | KeyboardEvent) => {
+    if (showTitle || showFileList) return;
+    
+    if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') {
       return;
     }
-    const items = event.dataTransfer.files;
-    if (items.length === 0) {
-      uploadStatus.error = "Not a file";
+    
+    // For keyboard events, assume center click
+    // For mouse events, check if click is within the circle bounds
+    if (event instanceof MouseEvent) {
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
+      const distance = Math.sqrt(
+        Math.pow(event.clientX - centerX, 2) + 
+        Math.pow(event.clientY - centerY, 2)
+      );
+      
+      if (distance > blackHoleRadius) {
+        return;
+      }
+    }
+    
+    event.stopPropagation();
+    event.preventDefault();
+    showFileList = true;
+  };
+
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      handleClick(event);
+    }
+  };
+
+  const handleFileSelect = (event: Event) => {
+    if (showFileList) return;
+    
+    const target = event.target as HTMLInputElement;
+    const files = target.files;
+    
+    if (!files || files.length === 0) {
       return;
     }
 
-    const droppedFile = items[0];
-    if (!droppedFile) {
-      uploadStatus.error = "Not a file";
-      return;
-    }
+    // Use stored click position (or center as fallback)
+    const startX = clickPosition.x || window.innerWidth / 2;
+    const startY = clickPosition.y || window.innerHeight / 2;
 
-    fileName = droppedFile.name;
-    currentFiles = event.dataTransfer.files;
-  }
+    console.log("files event", event) // this runs before animation 
+
+    simulateSelectionAnimation(startX, startY, files.length);
+    processFiles(files, true);
+    handleFileProcessing(files);
+  };
+
+  const handleDeleteFile = async (fileId: string) => {
+    try {
+      const response = await fetch(`/d/${fileId}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        // Remove the file from the list
+        uploadedFiles = uploadedFiles.filter(f => f.id !== fileId);
+      } else {
+        console.error('Failed to delete file:', response.statusText);
+        // Optionally show an error message to the user
+      }
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      // Optionally show an error message to the user
+    }
+  };
+
+  onMount(() => {
+    if (typeof window === 'undefined') return;
+    
+    window.addEventListener("dragenter", handleDragEnter, true);
+    window.addEventListener("dragleave", handleDragLeave, true);
+    window.addEventListener("dragover", handleDragOver, true);
+    window.addEventListener("drop", handleDrop, true);
+  });
+
+  onDestroy(() => {
+    unsubscribeActiveFollowers();
+    if (typeof window === 'undefined') return;
+
+    window.removeEventListener("dragenter", handleDragEnter, true);
+    window.removeEventListener("dragleave", handleDragLeave, true);
+    window.removeEventListener("dragover", handleDragOver, true);
+    window.removeEventListener("drop", handleDrop, true);
+    
+    dragVisual.cleanup();
+  });
 </script>
 
-<!-- on:drop|preventDefault="{dropHandler}" -->
-<!-- on:dragover|preventDefault -->
-<div
-  class="flex flex-col"
-  on:drop|preventDefault="{dropHandler}"
-  on:dragover|preventDefault
+<div 
+  class="fixed inset-0 flex items-center justify-center transition-opacity duration-500"
+  class:cursor-pointer={!showFileList}
+  class:opacity-0={showFileList}
+  onclick={handleClick}
+  role="button"
+  tabindex="0"
+  onkeydown={handleKeyDown}
 >
-  <div class="prose text-center self-center">
-    <h1 class="">StealthShare</h1>
-    <h2 class="text-xl text-gray-400 pb-4 mb-10">
-      Store your files fast, safe and anonymously!
-    </h2>
-  </div>
-  <div class=" flex-1 flex flex-col items-center gap-4 container self-center">
-    <input
-      type="text"
-      class=" input input-bordered w-full input-primary"
-      placeholder="File name"
-      bind:value="{fileName}"
-    />
-    {#if uploadStatus?.uri}
-      <a
-        href="{uploadStatus.uri}"
-        class="alert alert-success shadow-lg rounded-none">{uploadStatus.uri}</a
-      >
-      <div class="flex flex-col items-center gap-4 h-36">
-        <QrCode value="{uploadStatus.uri}" />
-      </div>
-    {/if}
-    {#if uploadStatus?.error}
-      <p class="alert alert-error shadow-lg rounded-none">
-        {@html uploadStatus.error}
-      </p>
-    {/if}
-    <progress class="progress w-full  {isUploading ? '' : 'hidden'}"></progress>
-    <div class="h-36 w-full flex flex-col items-center gap-4">
-      <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-      <label
-        tabindex="0"
-        on:keydown="{(e) => {
-          if (e.key === 'Enter') {
-            document.getElementById('file')?.click();
-          }
-        }}"
-        for="file"
-        class="w-full flex-1 btn btn-primary rounded-3xl shadow-2xl"
-      >
-        <h2 class="text-primary-content">
-          Drop a file or <span class=" link  link-info cursor-pointer">
-            Click
-          </span>
-        </h2>
-      </label>
-
-      <input
-        id="file"
-        name="file"
-        type="file"
-        class="hidden"
-        bind:files="{currentFiles}"
-      />
-    </div>
-    <!-- Submit button -->
-    <!-- TODO: Add submit stuff -->
-    <input
-      type="submit"
-      class="btn btn-accent w-full h-24 
-    {uploadStatus.error ? 'btn-disabled' : ''}
-    {currentFiles ? '' : 'btn-disabled'} 
-    {isUploading ? 'btn-disabled' : ''} 
-    {fileName ? '' : 'btn-disabled'}
-    "
-      on:click="{reqUploadFile}"
-      value="Upload"
-    />
-
-    <!-- File size limit -->
-    <p class="text-gray-400 text-sm">
-      Max file size: {FILE_SIZE_LIMIT_MB} MB
-    </p>
-  </div>
+  <h1
+    class="text-6xl font-bold text-white transition-opacity duration-300 ease-out pointer-events-none drop-shadow"
+    class:opacity-0={hasActiveFollowers || !showTitle}
+    style="text-shadow: 0 4px 32px rgba(0,0,0,0.85);"
+  >
+    StealthShare
+  </h1>
 </div>
+
+<!-- Hidden file input -->
+<input
+  bind:this={fileInputEl}
+  type="file"
+  multiple
+  class="hidden"
+  onchange={handleFileSelect}
+/>
+
+<!-- Black Hole Overlay -->
+{#if !showTitle}
+  <div
+    class="black-hole-overlay opacity-0"
+    style="width: {blackHoleRadius * 2}px; height: {blackHoleRadius * 2}px; border-radius: 50%;"
+    onclick={handleBlackHoleClick}
+    onkeydown={handleBlackHoleClick}
+    role="button"
+    tabindex="0"
+  ></div>
+{/if}
+
+<!-- File List View -->
+{#if showFileList}
+  <FileList 
+    files={uploadedFiles} 
+    onClose={() => showFileList = false}
+    onDelete={handleDeleteFile}
+  />
+{/if}
+
+<!-- File Followers -->
+{#each followerEntries as [id, instance]}
+  {#key id}
+    <FileFollower
+      id={id}
+      initialX={instance.x}
+      initialY={instance.y}
+      bind:this={instance.component}
+    />
+  {/key}
+{/each}
+
+<style>
+  .black-hole-overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(255, 0, 0, 0.1);
+    border: 2px solid rgba(255, 0, 0, 0.5);
+    cursor: pointer;
+    z-index: 5;
+    transition: all 0.3s ease;
+  }
+  
+  .black-hole-overlay:hover {
+    background-color: rgba(255, 0, 0, 0.2);
+    border-color: rgba(255, 0, 0, 0.8);
+  }
+</style>

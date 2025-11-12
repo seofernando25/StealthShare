@@ -1,10 +1,16 @@
 <script lang="ts">
+  import { run } from 'svelte/legacy';
+
   import { onMount } from "svelte";
   import QRCode from "qrcode";
   import { browser } from "$app/environment";
-  export let value = "";
+  interface Props {
+    value?: string;
+  }
 
-  let image = "";
+  let { value = "" }: Props = $props();
+
+  let image = $state("");
   let url = "";
 
   async function generateQrCode() {
@@ -19,11 +25,11 @@
   export function getImage() {
     return image;
   }
-  $: {
+  run(() => {
     if (value && browser) {
       generateQrCode();
     }
-  }
+  });
   onMount(() => {
     generateQrCode();
   });

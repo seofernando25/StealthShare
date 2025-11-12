@@ -1,8 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { uploadedFiles, type FileEntry } from "$lib/stores";
-  import Header from "$lib/components/Header.svelte";
-  import image from "$lib/assets/secret_sauce.webp";
+  import { uploadedFiles, showFileList, type FileEntry } from "$lib/stores";
+  import SpaceBackground from "$lib/components/SpaceBackground.svelte";
+  import "../app.css";
+  
+  interface Props {
+    children?: import('svelte').Snippet;
+  }
+
+  let { children }: Props = $props();
+  let fileListVisible = $state(false);
 
   onMount(async () => {
     // Check if we have a "uploads" key in localStorage a json array
@@ -14,37 +21,30 @@
       const parsed: FileEntry[] = JSON.parse(uploads);
       uploadedFiles.set(parsed);
     }
+    
+    // Subscribe to showFileList store
+    const unsubscribe = showFileList.subscribe(value => {
+      fileListVisible = value;
+    });
+    
+    return () => unsubscribe();
   });
 </script>
 
-<div class="h-screen flex flex-col">
-  <Header />
-  <slot />
+<div class="space-background-wrapper" class:fade-out={fileListVisible}>
+  <SpaceBackground />
 </div>
 
-<img class="bottom-art" draggable="false" src="{image}" alt="secret sauce" />
+<div class="h-screen flex flex-col relative z-10">
+  {@render children?.()}
+</div>
 
 <style>
-  @tailwind base;
-  @tailwind components;
-  @tailwind utilities;
-
-  /* Bottom right image, that is slightly hidden and does not cause overflow */
-  .bottom-art {
-    position: fixed;
-    bottom: 0;
-    right: 0;
-    /* Scale height relative to viewport height */
-    height: min(30vh, 30vw);
-
-    transform: translate(-10%, 30%);
-    transition: transform 0.2s ease-in-out;
+  .space-background-wrapper {
+    transition: opacity 0.5s ease;
   }
-
-  /* on hover goes slightly up */
-
-  .bottom-art:hover {
-    transform: translate(-10%, 30%) translateY(-30px);
-    transition: transform 0.2s ease-in-out;
+  
+  .space-background-wrapper.fade-out {
+    opacity: 0;
   }
 </style>

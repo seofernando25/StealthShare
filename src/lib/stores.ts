@@ -1,5 +1,4 @@
 import { writable, type Writable } from 'svelte/store';
-import type { UserLocalInfo } from './models/UserInfo';
 
 export type FileEntry = {
     filename: string,
@@ -7,5 +6,4 @@ export type FileEntry = {
 }
 
 export const uploadedFiles: Writable<FileEntry[]> = writable([]);
-
-export const loggedUser: Writable<UserLocalInfo | null> = writable(null);
+export const showFileList: Writable<boolean> = writable(false);
