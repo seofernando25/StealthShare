@@ -1,0 +1,24 @@
+name = "hth-webiste"
+account_id = "e3daa65948ffda29febf121409ca7405"
+
+main = "./.svelte-kit/cloudflare/index.js"
+
+
+[site]
+bucket = "./.cloudflare/public"
+
+[build]
+command = "pnpm build"
+
+compatibility_date = "2023-03-06"
+
+# hth-storage and hth-users
+[[r2_buckets]]
+binding = 'HTH_STORAGE'
+bucket_name = 'hth-storage'
+preview_bucket_name = 'hth-storage'
+
+[[r2_buckets]]
+binding = 'HTH_USERS'
+bucket_name = 'hth-users'
+preview_bucket_name = 'hth-users'
