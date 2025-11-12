@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import FileFollower from "$lib/components/FileFollower.svelte";
-  import FileList from "$lib/components/FileList.svelte";
+  import FileListComponent from "$lib/components/FileList.svelte";
   import type { FollowerInstance } from "$lib/fileFollowerManager";
   import { createDragVisualManager } from "$lib/dragVisualManager";
   import { showFileList as showFileListStore } from "$lib/stores";
@@ -21,7 +21,6 @@
     id: string;
     originalName: string;
     url: string;
-    downloadUrl: string;
     status: 'uploading' | 'completed';
     bytesUploaded: number;
     totalBytes: number;
@@ -34,13 +33,8 @@
   function calculateBlackHoleSize() {
     if (typeof window === 'undefined') return;
     
-    const fov = 75; // degrees, matches PerspectiveCamera fov
-    const distance = 1.5; // camera.position.z
-    const vFovRad = (fov * Math.PI) / 180;
-    const visibleHeight = 2 * Math.tan(vFovRad / 2) * distance;
-    
-    const normalizedRadius = 0.475;
-    blackHoleRadius = (window.innerHeight / visibleHeight) * normalizedRadius;
+    const radiusPercentage = 0.2;
+    blackHoleRadius = window.innerHeight * radiusPercentage;
   }
   
   $effect(() => {
@@ -82,17 +76,13 @@
   };
 
   const handleFileProcessing = async (files: FileList) => {
-    // Process files immediately when dropped or selected
-    console.log('Processing files:', files);
-    
-    const fileArray = Array.from(files);
+    const fileArray: File[] = Array.from(files as any);
     
     // Add files to upload list with uploading status
     const newUploads: FileUploadStatus[] = fileArray.map((file) => ({
       id: 'temp-' + Date.now() + '-' + Math.random(),
       originalName: file.name,
       url: '',
-      downloadUrl: '',
       status: 'uploading' as const,
       bytesUploaded: 0,
       totalBytes: file.size
@@ -157,7 +147,6 @@
                   id: completedFile.id,
                   originalName: completedFile.originalName || file.name,
                   url: completedFile.url,
-                  downloadUrl: completedFile.downloadUrl,
                   status: 'completed' as const,
                   bytesUploaded: f.totalBytes,
                   totalBytes: f.totalBytes,
@@ -310,23 +299,16 @@
     handleFileProcessing(files);
   };
 
-  const handleDeleteFile = async (fileId: string) => {
-    try {
-      const response = await fetch(`/d/${fileId}`, {
-        method: 'DELETE',
-      });
-
-      if (response.ok) {
-        // Remove the file from the list
-        uploadedFiles = uploadedFiles.filter(f => f.id !== fileId);
-      } else {
-        console.error('Failed to delete file:', response.statusText);
-        // Optionally show an error message to the user
-      }
-    } catch (error) {
-      console.error('Error deleting file:', error);
-      // Optionally show an error message to the user
-    }
+  const handleDeleteFile = (fileId: string) => {
+    // Optimistically remove the file from the list immediately
+    uploadedFiles = uploadedFiles.filter(f => f.id !== fileId);
+    
+    // Fire off the delete request in the background without waiting for response
+    fetch(`/d/${fileId}`, {
+      method: 'DELETE',
+    }).catch(() => {
+      // Silently ignore any errors
+    });
   };
 
   onMount(() => {
@@ -391,13 +373,12 @@
 {/if}
 
 <!-- File List View -->
-{#if showFileList}
-  <FileList 
-    files={uploadedFiles} 
-    onClose={() => showFileList = false}
-    onDelete={handleDeleteFile}
-  />
-{/if}
+<FileListComponent 
+  files={uploadedFiles} 
+  open={showFileList}
+  onClose={() => showFileList = false}
+  onDelete={handleDeleteFile}
+/>
 
 <!-- File Followers -->
 {#each followerEntries as [id, instance]}

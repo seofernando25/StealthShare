@@ -1,6 +1,6 @@
 import { error } from "@sveltejs/kit";
 import { S3Client } from "bun";
-import { getObject, s3Credentials } from "$lib/server/storage";
+import { s3Client, s3Credentials } from "$lib/server/storage";
 import type { RequestHandler } from "./$types";
 
 export const GET: RequestHandler = async ({ params }) => {
@@ -32,15 +32,18 @@ export const GET: RequestHandler = async ({ params }) => {
       }
     }
 
-    const fileBuffer = await getObject(storageKey);
+    const s3file = s3Client.file(storageKey);
+    const fileBuffer = await s3file.arrayBuffer();
+    const contentType = s3file.type || 'application/octet-stream';
+    
     return new Response(fileBuffer, {
       headers: {
-        "Content-Type": "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${originalFilename}"`,
+        "Content-Type": contentType,
+        "Content-Disposition": `inline; filename="${originalFilename}"`,
       },
     });
   } catch (err: any) {
-    if (err.message === "File not found") {
+    if (err.message === "File not found" || err?.message?.includes("not found") || err?.message?.includes("NoSuchKey")) {
       return new Response("File not found", { status: 404 });
     }
     console.error("Error getting file:", err);

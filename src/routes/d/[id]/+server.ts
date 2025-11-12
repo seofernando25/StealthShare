@@ -1,5 +1,5 @@
 import { S3Client } from "bun";
-import { deleteObject, s3Credentials } from "$lib/server/storage";
+import { s3Client, s3Credentials } from "$lib/server/storage";
 import type { RequestHandler } from "./$types";
 
 export const DELETE: RequestHandler = async ({ params }) => {
@@ -26,7 +26,7 @@ export const DELETE: RequestHandler = async ({ params }) => {
     }
 
     // Delete the file from S3
-    await deleteObject(storageKey);
+    await s3Client.file(storageKey).delete();
     
     return new Response(JSON.stringify({ success: true }), {
       headers: {

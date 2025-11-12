@@ -1,5 +1,5 @@
+import { s3Client } from '$lib/server/storage';
 import { error, json } from '@sveltejs/kit';
-import { putObject } from '$lib/server/storage';
 import { randomUUID } from 'crypto';
 import type { RequestHandler } from './$types';
 
@@ -16,7 +16,6 @@ export const POST: RequestHandler = async ({ request }) => {
       id: string; 
       originalName: string;
       url: string;
-      downloadUrl: string;
     }> = [];
 
     // Process each file
@@ -34,14 +33,12 @@ export const POST: RequestHandler = async ({ request }) => {
           const storageKey = `${fileId}-${file.name}`;
           
           console.log('Uploading file to MinIO:', storageKey);
-          // Upload to MinIO - this will throw if it fails
-          await putObject(storageKey, Buffer.from(buffer));
-          
+          await s3Client.file(storageKey).write(buffer);
+
           uploadedFiles.push({
             id: fileId,
             originalName: file.name,
             url: `/f/${fileId}`, // Direct download URL (auto-downloads)
-            downloadUrl: `/api/f/${fileId}` // Alternative API download URL
           });
         } catch (fileError) {
           console.error(`Failed to upload file ${file.name}:`, fileError);

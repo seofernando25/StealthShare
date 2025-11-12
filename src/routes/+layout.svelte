@@ -4,14 +4,11 @@
   import SpaceBackground from "$lib/components/SpaceBackground.svelte";
   import "../app.css";
   
-  interface Props {
-    children?: import('svelte').Snippet;
-  }
 
-  let { children }: Props = $props();
+  let { children } = $props();
   let fileListVisible = $state(false);
 
-  onMount(async () => {
+  onMount(() => {
     // Check if we have a "uploads" key in localStorage a json array
     const uploads = localStorage.getItem("uploads");
     if (!uploads) {
