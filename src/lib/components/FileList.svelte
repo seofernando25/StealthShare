@@ -460,5 +460,77 @@
     margin: 0;
   }
 
- 
+    @media (max-width: 768px) {
+      .dialog-content {
+        padding: 1.5rem;
+        width: 95%;
+        height: auto;
+        max-height: calc(100vh - 2rem);
+      }
+
+      .file-list {
+        padding-right: 0;
+      }
+
+      .file-list-header {
+        margin-bottom: 1.25rem;
+      }
+
+      .dialog-title {
+        font-size: 2rem;
+      }
+
+      .file-item {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1rem;
+      }
+
+      .file-qr-section {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .qr-container {
+        width: 104px;
+        height: 104px;
+      }
+
+      .file-meta {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+      }
+
+      .file-actions {
+        flex-direction: column;
+        align-items: stretch;
+        width: 100%;
+      }
+
+      .file-link,
+      .delete-button {
+        width: 100%;
+        min-width: 0;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .dialog-content {
+        padding: 1rem;
+        border-radius: 12px;
+      }
+
+      .dialog-title {
+        font-size: 1.5rem;
+      }
+
+      .file-item {
+        padding: 1rem;
+      }
+
+      .file-name {
+        font-size: 1rem;
+      }
+    }
 </style>
